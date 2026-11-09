@@ -730,7 +730,7 @@ class EnvironmentTests(unittest.TestCase):
             package("dlc", 1, 5_000_000_000, "b", "0000000000000004"),
         ]}
         self.catalog_path.write_text(json.dumps({"schema": 1, "games": [self.budget_game]}), encoding="utf-8")
-        self.probe.values["disk"] = {"free": 40_000_000_000}
+        self.probe.values["disk"] = {"free": 60_000_000_000}
         self.request.pop("requiredFreeBytes")
         self.request.pop("targetDir")
         return {"catalog": str(self.catalog_path), "gameId": "budget-fixture"}
@@ -855,7 +855,7 @@ class EnvironmentTests(unittest.TestCase):
             return text.replace("int(15e9)", "int(22e9)") if name == "pack/jobs/library.py" else text
         with patch.object(self.mod, "_text", side_effect=changed):
             c = self.item(self.budget_report(**fields), "disk")
-        self.assertEqual(c["detected"]["requiredFreeBytes"], 45_540_000_000)
+        self.assertEqual(c["detected"]["requiredFreeBytes"], 57_310_000_000)   # 10.7 GB × 1.1 × 3 + 22 GB，独立手算
 
     def test_budget_missing_shared_function_is_error_no_fallback(self):
         fields = self.budget_catalog()

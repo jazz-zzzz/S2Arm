@@ -677,10 +677,10 @@ class JobsTests(unittest.TestCase):
 
 
     def test_pack_space_needs_unpack_plus_direct(self):
-        # 预检门槛 = 原包 × 1.1 + 直连上限：恰好够放行，差 1 字节拦下，提示里写需要与剩余
+        # 预检门槛 = 原包 × 1.1 × 2（解包 + 单文件镜像）+ 直连上限：恰好够放行，差 1 字节拦下，提示里写需要与剩余
         import unittest.mock as um, collections
         base = dict(self.package("base"), size=6 << 30)
-        game = self.game(packages=[base]); need = (6 << 30) * 11 // 10 + 15_000_000_000
+        game = self.game(packages=[base]); need = 2 * ((6 << 30) * 11 // 10) + 15_000_000_000
         du = collections.namedtuple("du", "total used free")
         with um.patch("shutil.disk_usage", return_value=du(0, 0, need)):
             library.check_pack_space(self.c, game)
@@ -726,7 +726,7 @@ class JobsTests(unittest.TestCase):
                 game = self.game(tid=tid, packages=[dict(self.package("base", tid=tid), size=6 << 30)])
                 with um.patch("shutil.disk_usage", return_value=du(0, 0, 50 << 30)):
                     lib = library.space_budget(self.c, game)["volumes"][0]
-                self.assertEqual(lib["needBytes"], (6 << 30) * 11 // 10 + 15_000_000_000)
+                self.assertEqual(lib["needBytes"], 2 * ((6 << 30) * 11 // 10) + 15_000_000_000)
                 self.assertIn("直连着色器上限", lib["note"])
 
     def test_space_budget_uses_unpacked_bytes_for_compressed_packages(self):
@@ -741,7 +741,7 @@ class JobsTests(unittest.TestCase):
                 with um.patch("shutil.disk_usage", return_value=du(0, 0, 50 << 30)):
                     budget = library.space_budget(self.c, game)
                 self.assertEqual(budget["gameBytes"], want)
-                self.assertEqual(budget["volumes"][0]["needBytes"], want * 11 // 10 + 15_000_000_000)
+                self.assertEqual(budget["volumes"][0]["needBytes"], 2 * (want * 11 // 10) + 15_000_000_000)
 
     def test_space_budget_library_volume_only(self):
         # 11-02 起打 iPhone 包不再把原件暂存到数据目录（共用 游戏库/cache/<程序号>/extract），预算只有游戏库一卷：原件跨卷与否都一样
@@ -769,7 +769,7 @@ class JobsTests(unittest.TestCase):
                     library.check_pack_space(self.c, game)
                 lib = budget["volumes"][0]
                 self.assertEqual((lib["role"], lib["basis"], lib["needBytes"], lib["freeBytes"], lib["enough"], lib["volume"]),
-                                 ("library", "rule", (6 << 30) * 11 // 10 + 15_000_000_000, 50 << 30, True, "系统盘"))
+                                 ("library", "rule", 2 * ((6 << 30) * 11 // 10) + 15_000_000_000, 50 << 30, True, "系统盘"))
                 self.assertIn("直连着色器上限", lib["note"]); self.assertEqual(lib["unknown"], ["shader_cache"])
                 self.assertEqual(budget["gameBytes"], 6 << 30)
                 self.assertEqual([u["id"] for u in budget["unknown"]], ["shader_cache"])
@@ -789,7 +789,7 @@ class JobsTests(unittest.TestCase):
         self.assertIn("磁盘空间不够", str(e.exception))
         event = self.space_events()[-1]
         self.assertFalse(event["space"]["volumes"][0]["enough"])
-        self.assertEqual(event["space"]["volumes"][0]["needBytes"], (1 << 30) * 11 // 10 + 5_000_000_000)
+        self.assertEqual(event["space"]["volumes"][0]["needBytes"], 2 * ((1 << 30) * 11 // 10) + 5_000_000_000)
         self.c.begin("下一阶段", 2, 3); self.c.emit(done=1, total=2)
         job = json.loads(self.c.jobpath.read_text())
         self.assertEqual(job["space"], event["space"]); self.assertEqual(job["message"], "下一阶段")

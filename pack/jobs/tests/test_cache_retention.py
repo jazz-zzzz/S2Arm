@@ -38,8 +38,8 @@ class CompilerRetentionTests(unittest.TestCase):
             with patch.object(library, 'selected_packages', return_value=[{'sha256': 'synthetic', 'size': 4 << 30}]), \
                  patch('shutil.disk_usage', side_effect=usage):
                 budget = library.check_pack_space(c, game, compiler_policy=cache_retention.retention_policy())
-            # 4 GiB × 1.1 + 15 GB，独立手算
-            self.assertEqual(budget['compilerMinFreeBytes'], (4 << 30) * 11 // 10 + 15_000_000_000)
+            # 4 GiB × 1.1 × 2（解包 + 单文件镜像）+ 15 GB，独立手算
+            self.assertEqual(budget['compilerMinFreeBytes'], 2 * ((4 << 30) * 11 // 10) + 15_000_000_000)
             self.assertTrue(all(p.exists() for p in paths[:3]))
             self.assertFalse(paths[3].exists())
 
