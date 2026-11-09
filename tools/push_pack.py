@@ -347,6 +347,9 @@ def plan(dev, pack, work, full=False, say=print):
         pushed = rows(read(dev, f"{rp(dev)}/.pushed", work, "r.pushed"), 2) if keep and not cut else {}   # 有残批 / 上次撞截短包：不信 .pushed
         if keep: say(f"机上有推完、还没解开的推送包 {len(keep)} 个：其中 {len(pushed)} 个文件算已推，不重推")
         if have: have = spot_check(dev, pack, work, have, say)
+        if have and not (read(dev, f"{rp(dev)}/.applied", work, "r.applied.pre") or "").strip():   # send 写镜像前把 .applied 清空：空 = 上次传镜像被打断，机上那份不完整，账不能信
+            cut_img = [r for r in have if IMG.fullmatch(r)]
+            if cut_img: say(f"上次传 {cut_img[0]} 被打断，这次重传"); have = {r: h for r, h in have.items() if r not in cut_img}
     want = [w for w in (l.split("\t") for l in (pack / "index.tsv").read_text(encoding="utf-8").splitlines()) if len(w) == 3]
     acct = {**have, **pushed}
     todo = [w for w in want if acct.get(w[0]) != w[2]]

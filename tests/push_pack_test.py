@@ -263,6 +263,42 @@ class SpaceNeed(Base):
         d.call = lambda *a: (1, "不认识的操作 free"); self.assertIsNone(d.free())
 
 
+class ImagePush(Base):
+    def setUp(self):
+        super().setUp()
+        self.data = {"romfs.img": b"IMAGE", "b": b"BB"}
+        for k, v in self.data.items(): (self.pk / k).write_bytes(v)
+        (self.pk / "index.tsv").write_text("".join(self.row(k) for k in self.data))
+
+    def phone(self, applied):
+        f = {f"{RP}/manifest.json": '{"version": 2}', f"{RP}/index.applied.tsv": self.row("romfs.img") + self.row("b"), f"{RP}/b": b"BB", f"{RP}/romfs.img": b"IMAGE"}
+        if applied is not None: f[f"{RP}/.applied"] = applied
+        return f
+
+    def test_image_is_direct_not_tar(self):
+        self.dev = Fake({}); self.dev.put_big = lambda src, rel: self.dev.puts.append(rel)
+        nb, nt, n = push.plan(self.dev, self.pk, self.w, full=True, say=self.log.append)
+        self.assertEqual((nb, nt), (1, 2)); self.assertEqual((self.w / "direct_img.tsv").read_text().split("\t")[0], "romfs.img")
+        self.assertNotIn("romfs.img", (self.w / "push_000.tsv").read_text())
+
+    def test_interrupted_image_is_pushed_again(self):   # .applied 被清空 = 上次传到一半：账上有也要重传
+        self.dev = Fake(self.phone(""))
+        nb, nt, n = push.plan(self.dev, self.pk, self.w, say=self.log.append)
+        self.assertEqual((nt, (self.w / "direct_img.tsv").read_text().split("\t")[0]), (1, "romfs.img"))
+        self.assertTrue(any("被打断" in l for l in self.log))
+
+    def test_applied_image_is_not_pushed_again(self):
+        self.dev = Fake(self.phone("abc"))
+        self.assertEqual(push.plan(self.dev, self.pk, self.w, say=self.log.append)[1], 0)
+
+    def test_send_invalidates_applied_before_writing_image(self):
+        self.dev = Fake({}); order = []
+        put = self.dev.put; self.dev.put = lambda src, rel: (order.append(rel), put(src, rel))[1]
+        self.dev.put_big = lambda src, rel: order.append(rel)
+        push.plan(self.dev, self.pk, self.w, full=True, say=self.log.append); push.send(self.dev, self.pk, self.w, say=self.log.append)
+        self.assertLess(order.index(f"{RP}/.applied"), order.index(f"{RP}/romfs.img"))
+
+
 class SendFail(Base):
     def test_nospc(self):
         with self.assertRaises(push.Fail) as e: self.go({}, full_disk=True)
