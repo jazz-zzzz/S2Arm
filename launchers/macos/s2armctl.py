@@ -508,6 +508,11 @@ def diag_body(rest, now=None):
     desk = os.path.expanduser('~/Desktop'); base = desk if os.path.isdir(desk) else os.getcwd()
     return {'action': 'export', 'path': os.path.join(base, time.strftime('S2Arm-诊断-%Y%m%d-%H%M%S.zip', time.localtime(now)))}
 
+# 至少需要一个位置参数的命令：以前缺参数直接 IndexError，或把后面的选项当成游戏号发给控制口。
+NEEDS_ARG = {'install', 'uninstall', 'launch', 'cancel', 'retry', 'delete', 'customize', 'ipa', 'prepare',
+             'build', 'wait', 'install-check', 'logs', 'device', 'push-pack', 'snapshot', 'select',
+             'onboarding', 'target', 'keys', 'games'}
+
 def main():
     a = sys.argv[1:]
     if not a or a[0] in ('help', '-h', '--help'):
@@ -518,6 +523,13 @@ def main():
         except SystemExit: print('\n（App 的控制口没开：先 s2armctl start，或在 S2Arm 设置里打开「允许 AI 操作 S2Arm」）')
         return
     cmd, rest = a[0], a[1:]
+    # 子命令的 -h/--help 与缺参数要在调用 App 之前处理：install --help 以前会把 --help 当成 gameId 发到控制口，
+    # 得到 400「没有这个 gameId」；install/wait 不带参数则直接 IndexError。
+    if any(x in ('-h', '--help') for x in rest):
+        print(USAGE)
+        return
+    if cmd in NEEDS_ARG and not any(not x.startswith('-') for x in rest):
+        print(USAGE); sys.exit(2)
     if cmd == 'start': start(rest[0] if rest else default_app()); return
     if cmd == 'state':
         s = call('GET', '/state'); print(json.dumps(s, ensure_ascii=False, indent=None if '--json' in rest else 1) if ('--full' in rest or '--json' in rest) else brief(s)); return

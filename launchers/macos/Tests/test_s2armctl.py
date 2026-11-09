@@ -522,3 +522,35 @@ class JobIdentityTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("无法确认作业进程身份", output)
         self.assertNotIn("作业进程已不在", output)
+
+
+class UsageGuardTests(unittest.TestCase):
+    """Subcommand help and missing arguments must not reach the App's control port."""
+
+    def run_main(self, argv):
+        output = io.StringIO()
+        with mock.patch.object(ctl, "call") as call, \
+                mock.patch.object(ctl.sys, "argv", ["s2armctl", *argv]), \
+                contextlib.redirect_stdout(output):
+            ctl.main()
+        return call, output.getvalue()
+
+    def test_subcommand_help_never_reaches_the_app(self):
+        for argv in (["install", "--help"], ["install", "-h"], ["wait", "--help"]):
+            with self.subTest(argv=argv):
+                call, output = self.run_main(argv)
+                call.assert_not_called()
+                self.assertIn("s2armctl", output)
+
+    def test_missing_required_argument_exits_2_without_app_call(self):
+        for argv in (["install"], ["wait"], ["build"], ["snapshot"], ["keys"],
+                     ["install-check", "--json"], ["ipa", "--space-override"]):
+            with self.subTest(argv=argv):
+                with mock.patch.object(ctl, "call") as call, \
+                        mock.patch.object(ctl.sys, "argv", ["s2armctl", *argv]), \
+                        contextlib.redirect_stdout(io.StringIO()), \
+                        self.assertRaises(SystemExit) as caught:
+                    ctl.main()
+                call.assert_not_called()
+                self.assertEqual(caught.exception.code, 2)
+
