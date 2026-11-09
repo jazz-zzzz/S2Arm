@@ -373,6 +373,14 @@ int s2a_import_state_game_quick(const char *proc_docs, const char *gid) {
     }
     return s2a_import_state_game(proc_docs, gid);
 }
+// 游戏库只列这台设备上真能玩的款：已应用；或推送包齐了（清单是最后写的）只等起局解开。.applied 被清空 = 上次传镜像被打断，不算
+int s2a_game_on_device(const char *proc_docs, const char *gid) {
+    int st = s2a_import_state_game_quick(proc_docs, gid);
+    if (st == S2A_IMPORT_READY) return 1;
+    if (st != S2A_IMPORT_PENDING) return 0;
+    char mf[2200], ap[2200]; struct stat s; snprintf(mf, sizeof mf, "%s/games/%s/资源包/manifest.json", proc_docs, gid); snprintf(ap, sizeof ap, "%s/games/%s/资源包/.applied", proc_docs, gid);
+    return !stat(mf, &s) && !(!stat(ap, &s) && s.st_size == 0);
+}
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 #include <CoreFoundation/CoreFoundation.h>
 #include <pthread.h>

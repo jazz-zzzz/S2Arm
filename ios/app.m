@@ -635,10 +635,8 @@ static __weak UIWindow *g_lib_window;
 int s2a_import_state_game_quick(const char *proc_docs, const char *gid);   // pack_apply.c
 static int game_pack_state(const char *gid) { char d[1024]; s2a_container_docs(d, sizeof d); return s2a_import_state_game_quick(d, gid); }
 void s2a_shell_library_appeared(void) { static int once; if (!once++) BOOT_MARK("游戏库界面可操作"); }
-int s2a_shell_game_data_ready(const char *gid) {
-    int st = game_pack_state(gid);
-    return st == 0 || st == 1;   // S2A_IMPORT_READY / S2A_IMPORT_PENDING
-}
+int s2a_game_on_device(const char *proc_docs, const char *gid);   // pack_apply.c
+int s2a_shell_game_data_ready(const char *gid) { char d[1024]; s2a_container_docs(d, sizeof d); return s2a_game_on_device(d, gid); }
 static void library_pack_help(NSString *gid, BOOL again) {
     int st = game_pack_state(gid.UTF8String);
     if (st == 0 || st == 1) { LOG("游戏库：%s 资源包已就绪，刷新库界面", gid.UTF8String); if (s2a_shell_refresh) s2a_shell_refresh(); return; }

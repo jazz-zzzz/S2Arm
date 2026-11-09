@@ -10753,48 +10753,18 @@
         }
       }
     },
-    "Your games will appear here when they are included in this app.": {
+    "Install a game from S2Arm on your computer and it will appear here.": {
       "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deine Spiele erscheinen hier, sobald sie in dieser App enthalten sind."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Your games will appear here when they are included in this app."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vos jeux apparaîtront ici dès qu’ils seront inclus dans cette app."
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "I tuoi giochi compariranno qui quando saranno inclusi in questa app."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このアプリにゲームが含まれると、ここに表示されます。"
-          }
-        },
-        "sv": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dina spel visas här när de ingår i appen."
+            "value": "Install a game from S2Arm on your computer and it will appear here."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "游戏加入此 App 后会显示在这里。"
+            "value": "在电脑上的 S2Arm 里把游戏装到这台设备，它就会出现在这里。"
           }
         }
       }

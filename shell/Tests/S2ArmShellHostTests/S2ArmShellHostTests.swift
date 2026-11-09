@@ -56,18 +56,19 @@ import ShellUI
     var played: [String] = [], picked: [String] = []
     let model = S2ArmShellHostModel(catalogue: Catalogue.parse(data, baseDirectory: URL(fileURLWithPath: "/")), play: { played.append($0) },
                                     gameDataReady: { ready.contains($0) }, pickGameData: { picked.append($0) })
-    #expect(model.games.map(\.game.state) == [.needsGameData, .needsGameData])
+    #expect(model.games.map(\.id) == ["0100000000020000"])   // 只显示这台设备上资源到位的款
     model.actions.onPlay("0100000000010000")
     #expect(played.isEmpty && picked == ["0100000000010000"])
     model.actions.onPickGameData("0100000000010000")
     #expect(picked == ["0100000000010000", "0100000000010000"])
     ready.insert("0100000000010000"); model.refreshGameData()
-    #expect(model.games.map(\.game.state) == [.playable, .needsGameData])
+    #expect(model.games.map(\.id) == ["0100000000010000", "0100000000020000"] && model.games.map(\.game.state) == [.playable, .needsGameData])   // 再推一款，刷新后多一款
     model.actions.onPlay("0100000000010000")
     #expect(played == ["0100000000010000"])
     ready.remove("0100000000010000")              // 库开着时资源包被拿走：Play 当场重判、不放行
     model.actions.onPlay("0100000000010000")
     #expect(played == ["0100000000010000"] && picked.count == 3)
+    #expect(model.games.map(\.id) == ["0100000000020000"])   // 删掉后不再显示
 }
 
 // 宿主「重新检查」→ s2a_shell_refresh → 登记的处理函数

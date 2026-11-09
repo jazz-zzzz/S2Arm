@@ -9,7 +9,12 @@ import ShellUI
 /// 设置行：每款游戏的「画面」「虚拟手柄」两组（S2ArmGameSettings，11-07 维护者）；数据目录、云存档、删除等动作本刀不接（ShellActions 缺省空操作）。
 @MainActor @Observable
 public final class S2ArmShellHostModel {
-    public private(set) var games: [GameDetail]
+    /// 清单里的全部款（容器里的）
+    private var allGames: [GameDetail]
+    /// 这台设备上资源没到位的款：不在库里显示
+    private var notOnDevice: Set<String> = []
+    /// 库里显示的款：只有这台设备上真能玩的（清单列着、资源已到位）
+    public var games: [GameDetail] { allGames.filter { !notOnDevice.contains($0.id) } }
     public private(set) var controllers: [ControllerInfo] = []
     public private(set) var input = ShellInputLog()
     public private(set) var padSnapshot: PadSnapshot?
@@ -41,7 +46,7 @@ public final class S2ArmShellHostModel {
         self.identityStore = identityStore
         listedTiles = Dictionary(catalogue.tiles.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         listedBanners = catalogue.bannerURLs
-        games = catalogue.tiles.map { tile in
+        allGames = catalogue.tiles.map { tile in
             var state = layoutState(tile.id); state.customIdentity = identityStore.load(tile.id) != nil
             return GameDetail(game: tile, sections: S2ArmGameSettings.sections(for: tile.id, stores: stores, state: state))
         }
@@ -56,10 +61,10 @@ public final class S2ArmShellHostModel {
         //   S2A_SHELL_OPEN_LAYOUT_EDITOR=<游戏号> 起来直接盖上这款的「调整位置」编辑页
         //   S2A_SHELL_PLAY=<游戏号> 起来 2 秒后替人点这款的 Play（走同一条 requestPlay → C 出口；截图局别带 S2A_AUTOPLAY=1：没有视觉驾驶员时自动玩家判卡住、优雅退出）
         let env = ProcessInfo.processInfo.environment
-        if let id = env["S2A_SHELL_OPEN_LAYOUT_EDITOR"], games.contains(where: { $0.id == id }) {
+        if let id = env["S2A_SHELL_OPEN_LAYOUT_EDITOR"], allGames.contains(where: { $0.id == id }) {
             editingLayout = id; NSLog("S2Arm 游戏库：S2A_SHELL_OPEN_LAYOUT_EDITOR 直接开 %@ 的调整位置页", id)
         }
-        if let id = env["S2A_SHELL_PLAY"], games.contains(where: { $0.id == id }) {
+        if let id = env["S2A_SHELL_PLAY"], allGames.contains(where: { $0.id == id }) {
             NSLog("S2Arm 游戏库：S2A_SHELL_PLAY 2 秒后开始 %@", id)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.requestPlay(id) }
         }
@@ -67,12 +72,15 @@ public final class S2ArmShellHostModel {
 
     /// 重判各款资源包（建好、回前台、宿主说明里「重新检查」后）：清单 playable 且资源包不在 → needsGameData；放好了 → 回到清单状态
     public func refreshGameData() {
-        for i in games.indices {
-            let id = games[i].id, listed = listedStates[id] ?? games[i].game.state
-            let want: GameState = listed == .playable && !gameDataReady(id) ? .needsGameData : listed
-            if games[i].game.state != want {
+        var missing = Set<String>()
+        defer { if missing != notOnDevice { notOnDevice = missing }; NSLog("S2Arm 游戏库：这台设备上 %d / %d 款可玩", allGames.count - missing.count, allGames.count) }
+        for i in allGames.indices {
+            let id = allGames[i].id, listed = listedStates[id] ?? allGames[i].game.state, ready = gameDataReady(id)
+            if !ready { missing.insert(id) }
+            let want: GameState = listed == .playable && !ready ? .needsGameData : listed
+            if allGames[i].game.state != want {
                 NSLog("S2Arm 游戏库：%@ 资源包%@", id, want == .needsGameData ? "不在机上，显示需要游戏数据" : "已就绪")
-                games[i].game.state = want
+                allGames[i].game.state = want
             }
         }
     }
@@ -87,8 +95,8 @@ public final class S2ArmShellHostModel {
     /// 只放行可运行的那款（界面本身也只在 playable 时调 onPlay，这里再守一道）；放行前当场重判资源包（库开着时资源被删 / 换机拷走）
     public func requestPlay(_ id: String) {
         refreshGameData()
-        if games.first(where: { $0.id == id })?.game.state == .needsGameData { requestGameData(id); return }
-        guard let g = games.first(where: { $0.id == id }), g.game.state == .playable else {
+        if allGames.first(where: { $0.id == id })?.game.state == .needsGameData { requestGameData(id); return }
+        guard let g = allGames.first(where: { $0.id == id }), g.game.state == .playable else {
             NSLog("S2Arm 游戏库：Play %@ 被拒（不在列表或不可运行）", id)
             return
         }
@@ -111,13 +119,13 @@ public final class S2ArmShellHostModel {
     /// 编辑页关了（存了 / 取消 / 恢复默认）：布局行跟着刷新
     public func closeLayoutEditor() { if let id = editingLayout { editingLayout = nil; refresh(id) } }
     func refresh(_ id: String) {
-        guard let i = games.firstIndex(where: { $0.id == id }) else { return }
+        guard let i = allGames.firstIndex(where: { $0.id == id }) else { return }
         var state = layoutState(id); state.customIdentity = identityStore.load(id) != nil
-        games[i].sections = S2ArmGameSettings.sections(for: id, stores: stores, state: state)
+        allGames[i].sections = S2ArmGameSettings.sections(for: id, stores: stores, state: state)
     }
 
     /// 改名字和封面的编辑页要用：当前显示的名字，以及有没有自定义
-    public func identityName(_ id: String) -> String { games.first(where: { $0.id == id })?.game.title ?? "" }
+    public func identityName(_ id: String) -> String { allGames.first(where: { $0.id == id })?.game.title ?? "" }
     public func hasCustomIdentity(_ id: String) -> Bool { identityStore.load(id) != nil }
 
     public func saveIdentity(_ id: String, name: String, cover: Data?) {
@@ -132,8 +140,8 @@ public final class S2ArmShellHostModel {
 
     /// 把这台手机上的名字和封面叠到清单条目上；没有就回到清单原样，状态保持不变。
     private func applyIdentity(_ id: String) {
-        guard let i = games.firstIndex(where: { $0.id == id }), var tile = listedTiles[id] else { return }
-        tile.state = games[i].game.state
+        guard let i = allGames.firstIndex(where: { $0.id == id }), var tile = listedTiles[id] else { return }
+        tile.state = allGames[i].game.state
         bannerURLs[id] = listedBanners[id]
         if let custom = identityStore.load(id) {
             if !custom.name.isEmpty { tile.title = custom.name }
@@ -141,7 +149,7 @@ public final class S2ArmShellHostModel {
                 tile.banner = art; tile.icon = art; bannerURLs[id] = url
             }
         }
-        games[i].game = tile
+        allGames[i].game = tile
     }
 
     public func startControllers() {
