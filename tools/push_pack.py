@@ -52,6 +52,7 @@ from pathlib import Path
 
 R = Path(__file__).resolve().parents[1]
 LIM = 1 << 30
+IMG = re.compile(r"(^|.*/)romfs\.img$")   # 单文件镜像：直接写到最终路径，不进 tar、不用首启解开
 DOCS = "Documents"   # 设备侧文档根（单款 App）；多款容器每款 Documents/games/<游戏号>（pack/ship_ext.py 容器布局），设备对象的 docs 属性
 
 
@@ -119,6 +120,8 @@ class Devpush:
     def rm(self, rel):   # 删机上一个文件或整个目录（已不在算成功）。→ (成功?, 输出)
         rc, out = self.call("rm", rel)
         return rc == 0, out
+
+    put_big = put
 
     def tar_ok(self, rel):
         rc, out = self.call("tar-ok", rel)
@@ -193,6 +196,14 @@ class Devicectl:
         self.slow(f"推 {rel}", s0, rc)
         if rc:
             raise Fail(f"推 {Path(rel).name} 失败")
+
+    def put_big(self, src, rel):   # 大文件优先走 s2a-devpush 流式（usbmuxd 能到时快且不落临时文件），不行退回 devicectl
+        if self.dp:
+            try:
+                return self.dp.put(src, rel)
+            except Fail as e:
+                self.say(f"流式写 {Path(rel).name} 没成（{str(e)[-160:]}），改走 devicectl")
+        self.put(src, rel)
 
     def ls(self, rel):
         rc, out = self.dcp(60, "device", "info", "files", *self.container(), "--subdirectory", rel, "--no-recurse")
@@ -339,7 +350,9 @@ def plan(dev, pack, work, full=False, say=print):
     want = [w for w in (l.split("\t") for l in (pack / "index.tsv").read_text(encoding="utf-8").splitlines()) if len(w) == 3]
     acct = {**have, **pushed}
     todo = [w for w in want if acct.get(w[0]) != w[2]]
-    bs = batches_of(pack, todo)
+    direct = [w for w in todo if IMG.fullmatch(w[0])]
+    (work / "direct_img.tsv").write_text("".join("\t".join(w) + "\n" for w in direct), encoding="utf-8")
+    bs = batches_of(pack, [w for w in todo if not IMG.fullmatch(w[0])])
     for i, b in enumerate(bs):
         (work / f"push_{i:03d}.tsv").write_text("".join("\t".join(w) + "\n" for w in b), encoding="utf-8")
     (work / "pushed").write_text("".join(f"{r}\t{h}\n" for r, h in pushed.items()), encoding="utf-8")
@@ -393,6 +406,22 @@ def send(dev, pack, work, say=print):
     files = sorted(work.glob("push_*.tsv"))
     led = work / "pushed"; ledger = led.read_text(encoding="utf-8") if led.is_file() else ""
     nt = nb = ns = nd = done = 0; ts = int(time.time()); t0 = time.time()
+    dl = work / "direct_img.tsv"
+    direct = [l.split("\t") for l in dl.read_text(encoding="utf-8").splitlines() if l] if dl.is_file() else []
+    if direct:   # 先把「已应用」作废：镜像写到一半时机上不能判成就绪（App 看到长度不对会提示重新传）
+        e = work / "not_applied"; e.write_bytes(b"")
+        try: dev.put(e, f"{rp(dev)}/.applied")
+        finally: e.unlink(missing_ok=True)
+    for w in direct:
+        t1 = time.time()
+        try:
+            dev.put_big(pack / w[0], f"{rp(dev)}/{w[0]}")
+        except Fail as e:
+            if dev.nospc(): raise Fail(f"测试设备空间不足（推 {w[0]} 时 POSIX 28）")
+            say(f"【红】传 {w[0]} 中断（{e}）；机上这份不完整，不会被当成可用，重新装机会从头重传")
+            raise Fail(f"资源传输中断：{w[0]} 没传完，重新装到 iPhone 会从头再传一次")
+        done += int(w[1]); nt += 1; ledger += f"{w[0]}\t{w[2]}\n"; led.write_text(ledger, encoding="utf-8"); dev.put(led, f"{rp(dev)}/.pushed")
+        say(f"  直写 {w[0]}：{int(w[1]) / 1e9:.2f} GB，{time.time() - t1:.0f} 秒，{int(w[1]) / 1e6 / max(time.time() - t1, 1e-3):.1f} MB/s")
     for k, bf in enumerate(files):
         b = [l.split("\t") for l in bf.read_text(encoding="utf-8").splitlines() if l]
         lst = work / "push.lst"; lst.write_text("".join(w[0] + "\n" for w in b), encoding="utf-8")

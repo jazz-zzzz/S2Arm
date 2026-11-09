@@ -185,8 +185,10 @@ def assemble(a):
     srcs = os.path.join(pkg, 'srcs.txt')
     with open(srcs, 'w', encoding='utf-8', newline='\n') as f: f.write(''.join(f'{x}={y}\n' for x, y in pkg_srcs.srcs(w)))
     pl, vl = os.path.join(pkg, 'pack.log'), os.path.join(pkg, 'verify.log')
-    if step(tl, '资源包', [PY, os.path.join(H, 'pack.py'), os.path.join(pkg, 'pack'), '@' + srcs], pl, 'w'): raise Red(f'资源包失败（{last(pl)}）')
-    if step(tl, '资源包核对', [PY, os.path.join(H, 'verify.py'), os.path.join(pkg, 'pack'), '@' + srcs], vl, 'w'): raise Red(last(vl))
+    if step(tl, '资源包', [PY, os.path.join(H, 'pack.py'), os.path.join(pkg, 'pack.files'), '@' + srcs], pl, 'w'): raise Red(f'资源包失败（{last(pl)}）')
+    if step(tl, '资源包核对', [PY, os.path.join(H, 'verify.py'), os.path.join(pkg, 'pack.files'), '@' + srcs], vl, 'w'): raise Red(last(vl))
+    il = os.path.join(pkg, 'image.log')   # 按文件的资源包 pack.files 核对过才转镜像；pack.files 留着给下次增量，推手机的是 pack
+    if step(tl, '单文件镜像', [PY, os.path.join(H, 'romfs_image.py'), os.path.join(pkg, 'pack.files'), os.path.join(pkg, 'pack'), '--root', w], il, 'w'): raise Red(f'单文件镜像失败（{last(il)}）')
     return ipa
 
 

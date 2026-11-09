@@ -477,7 +477,7 @@ def pack_need_bytes(packages, unpacked=False, windows=None):
     size = _pack_input_bytes(packages)
     copy = size * 11 // 10
     windows = os.name == "nt" if windows is None else windows
-    return (0 if unpacked else copy) + (copy if windows else 0) + _pack_direct_bytes(size)
+    return (0 if unpacked else copy) + (copy if windows else 0) + copy + _pack_direct_bytes(size)   # 再加一份 copy：单文件镜像 romfs.img 是真实占盘的一份（pack/romfs_image.py）
 
 
 # 出包实测账（11-07 联合开发者旷野之息：外接盘 NX 剩 45 GB，经验门槛要 4x GB 拦下）：每次 Mac 打包 / 打 iPhone 包成功后，

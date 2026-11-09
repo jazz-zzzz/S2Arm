@@ -243,7 +243,8 @@ namespace S2A.Services
                     throw new InvalidOperationException("Game clock and deterministic memory providers are required");
                 if (!System.IO.File.Exists(System.IO.Path.Combine(configuration.GameDirectory, "exefs", "main.npdm")) ||
                     !System.IO.File.Exists(System.IO.Path.Combine(configuration.GameDirectory, "ctl", "control.nacp")) ||
-                    !System.IO.Directory.Exists(System.IO.Path.Combine(configuration.GameDirectory, "romfs")))
+                    !(System.IO.Directory.Exists(System.IO.Path.Combine(configuration.GameDirectory, "romfs")) ||
+                      System.IO.File.Exists(System.IO.Path.Combine(configuration.GameDirectory, RomFsIndex.ImageName))))
                     throw new InvalidOperationException("Validated game data requires NPDM, complete NACP and RomFS");
                 // Revision files may be content-pool symlinks. Validate the opened
                 // content, not FileInfo.Length (the symlink text length on Unix).

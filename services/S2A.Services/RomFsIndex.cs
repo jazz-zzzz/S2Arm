@@ -21,6 +21,10 @@ namespace S2A.Services
     public static class RomFsIndex
     {
         public const string FileName = "romfs.s2aidx";
+        public const string ImageName = "romfs.img";
+        public const string ImageMapName = "romfs.imgmap";
+        public const string ImageOverlayDir = "romfs_overlay";
+        private static ReadOnlySpan<byte> ImageMagic => "S2ARIM01"u8;
         private static ReadOnlySpan<byte> Magic => "S2ARFS01"u8;
 
         public static void Write(string romfsDir, string outPath) => Write(romfsDir, outPath, null);
@@ -174,7 +178,29 @@ namespace S2A.Services
         }
 
         public static IStorage Open(string romfsDir, string indexPath, string overlayDir = null) =>
-            new IndexedStorage(Path.GetFullPath(romfsDir), File.ReadAllBytes(indexPath), indexPath, OverlayFiles(overlayDir));
+            new IndexedStorage(Path.GetFullPath(romfsDir), File.ReadAllBytes(indexPath), indexPath, OverlayFiles(overlayDir), null, null);
+
+        // 单文件镜像（pack/romfs_image.py）：romfs.img + romfs.imgmap + 索引齐全且镜像长度对得上才用；没有或长度不符（推到一半）→ null，调用方退回目录布局或报红
+        public static IStorage OpenImage(string programDir)
+        {
+            string image = Path.Combine(programDir, ImageName), map = Path.Combine(programDir, ImageMapName), index = Path.Combine(programDir, FileName);
+            if (!File.Exists(image) || !File.Exists(map) || !File.Exists(index)) return null;
+            byte[] raw = File.ReadAllBytes(map);
+            if (raw.Length < 20 || !raw.AsSpan(0, 8).SequenceEqual(ImageMagic)) throw new InvalidDataException($"RomFS 镜像对照表格式不对：{map}");
+            long length = BitConverter.ToInt64(raw, 8);
+            int count = BitConverter.ToInt32(raw, 16);
+            if (raw.Length != 20 + count * 8L) throw new InvalidDataException($"RomFS 镜像对照表长度不对：{map}");
+            var handle = File.OpenHandle(image, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
+            if (RandomAccess.GetLength(handle) != length)
+            {
+                handle.Dispose();
+                return null;
+            }
+            long[] offsets = new long[count];
+            Buffer.BlockCopy(raw, 20, offsets, 0, count * 8);
+            return new IndexedStorage(Path.GetFullPath(Path.Combine(programDir, "romfs")), File.ReadAllBytes(index), index,
+                OverlayFiles(Path.Combine(programDir, ImageOverlayDir)), handle, offsets);
+        }
 
         // macOS 垃圾（同 pack/pack.py、graphics/nvn/tools/romfs_list.py）：不进资源包，也就不能进镜像，否则游戏枚举到就读不到
         internal static bool IsHostJunk(string path)
@@ -214,11 +240,15 @@ namespace S2A.Services
             private readonly long[] _fileLen;
 
             private readonly Dictionary<string, string> _overlay;   // RomFS 相对路径 → 覆盖层文件（OverlayFiles），null = 无覆盖层
+            private readonly Microsoft.Win32.SafeHandles.SafeFileHandle _image;   // 单文件镜像；null = 目录布局
+            private readonly long[] _imageOffset;   // 文件号 → 镜像偏移，-1 = 在覆盖层
 
-            public IndexedStorage(string root, byte[] idx, string where, Dictionary<string, string> overlay)
+            public IndexedStorage(string root, byte[] idx, string where, Dictionary<string, string> overlay, Microsoft.Win32.SafeHandles.SafeFileHandle image, long[] imageOffset)
             {
                 _root = root;
                 _overlay = overlay;
+                _image = image;
+                _imageOffset = imageOffset;
                 _idx = idx;
 
                 if (idx.Length < 24 || !idx.AsSpan(0, 8).SequenceEqual(Magic))
@@ -286,6 +316,11 @@ namespace S2A.Services
 
                 _files = new LazyHostFile[nf];
                 _fileLen = fLen;
+
+                if (imageOffset != null && imageOffset.Length != nf)
+                {
+                    throw new InvalidDataException($"RomFS 镜像对照表 {imageOffset.Length} 项，索引 {nf} 个文件：{where}");
+                }
             }
 
             public override Result Read(long offset, Span<byte> destination)
@@ -323,7 +358,21 @@ namespace S2A.Services
                     int count = (int)Math.Min(destination.Length, end - offset);
                     long inner = offset - _start[i];
 
-                    if (_ref[i] >= 0)
+                    if (_ref[i] >= 0 && _image != null && _imageOffset[_ref[i]] >= 0)
+                    {
+                        // 读不满就是镜像被截短，回失败，不补零当完整（同下面目录布局）
+                        long at = _imageOffset[_ref[i]] + inner;
+                        Span<byte> left = destination[..count];
+
+                        while (!left.IsEmpty)
+                        {
+                            int got = RandomAccess.Read(_image, left, at);
+                            if (got <= 0) return ResultFs.HostFileDataCorrupted.Value;
+                            left = left[got..];
+                            at += got;
+                        }
+                    }
+                    else if (_ref[i] >= 0)
                     {
                         Result r = File(_ref[i], out LazyHostFile file);
 
@@ -380,6 +429,12 @@ namespace S2A.Services
                 }
 
                 return Result.Success;
+            }
+
+            public override void Dispose()
+            {
+                _image?.Dispose();
+                base.Dispose();
             }
 
             public override Result GetSize(out long size)

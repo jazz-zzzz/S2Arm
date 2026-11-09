@@ -141,10 +141,18 @@ async fn run(a: &[String]) -> Result<(), String> {
             let mut parts: Vec<&str> = remote.split('/').collect(); parts.pop();
             let mut cur = String::new();
             for p in parts { if p.is_empty() { continue; } cur = if cur.is_empty() { p.to_string() } else { format!("{cur}/{p}") }; let _ = afc.mk_dir(cur.clone()).await; }
-            let data = tokio::fs::read(local).await.map_err(|e| format!("读不了 {local}：{e}"))?;
-            let mut f = afc.open(remote.clone(), AfcFopenMode::WrOnly).await.map_err(|e| format!("打不开 {remote}：{e}"))?;
-            f.write_entire(&data).await.map_err(|e| format!("写 {remote} 失败：{e}"))?;
-            println!("put {} 字节 → {remote}", data.len());
+            let mut src = tokio::fs::File::open(local).await.map_err(|e| format!("读不了 {local}：{e}"))?;   // 流式：镜像可达十几 GB，不整份读进内存
+            let f = afc.open(remote.clone(), AfcFopenMode::WrOnly).await.map_err(|e| format!("打不开 {remote}：{e}"))?;
+            let mut f = Box::pin(f);
+            let mut w = tokio::io::BufWriter::with_capacity(4 << 20, &mut f);
+            let mut buf = vec![0u8; 1 << 20]; let mut total = 0u64;
+            loop {
+                let n = src.read(&mut buf).await.map_err(|e| format!("读 {local} 失败：{e}"))?;
+                if n == 0 { break; }
+                w.write_all(&buf[..n]).await.map_err(|e| format!("写 {remote} 失败：{e}"))?; total += n as u64;
+            }
+            w.flush().await.map_err(|e| format!("写 {remote} 失败：{e}"))?;
+            println!("put {total} 字节 → {remote}");
         }
         "put-tar" => {
             let (list, root, remote) = (read_list(&a[4])?, &a[5], a[6].trim_start_matches('/').to_string());

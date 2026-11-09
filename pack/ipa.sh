@@ -108,7 +108,7 @@ fail() { local L=$W/pkg/build.log A=$W/pkg/archive.log K=; if [ -s "$L" ]; then 
 errline() { LC_ALL=C /usr/bin/grep -a -m1 -E 'error:|fatal error' "$1" 2> /dev/null | cut -c1-200 || true; }
 # 上一版的资源包与它的状态表（克隆过来的）留着：pack.py 按源字节数 / mtime 只重克隆、重算变了的文件，verify.py 按上次核对记录只重比变了的。
 #   10-21 查实：原先整个 pkg/ 先删，九款每版都把 3.5 万–13.8 万个文件（10–34 GB）全部重克隆、重算 SHA、再逐字节核对，资源包 + 核对 1–2 分钟
-t0=$SECONDS; for e in "$W/pkg"/*; do case "${e##*/}" in pack|pack.state.tsv|pack.verify.tsv) ;; *) _root_rm "$e";; esac; done; _root_rm "$W/build"; mkdir -p "$W/pkg"
+t0=$SECONDS; for e in "$W/pkg"/*; do case "${e##*/}" in pack|pack.files|pack.image.key|pack.files.state.tsv|pack.files.verify.tsv) ;; *) _root_rm "$e";; esac; done; _root_rm "$W/build"; mkdir -p "$W/pkg"
 TL=$W/pkg/timing.tsv; { printf '步\t墙钟秒\tuser秒\tsys秒\t退出码\n'; cat "$TL0"; } > "$TL"; rm -f "$TL0"   # 出包子步拆账（10-20 维护者：有缓存时出包 476 秒，要分清是哪一步）
 PN=5; PD=0   # 出包步数：组装（预编壳）、签名、打 ipa、资源包、资源包核对（本提交第一次出包另加一步出壳）
 tmk() { TM "$@"; local r=$?; PD=$((PD + 1)); prog_tick 出包 "$PD" "$PN"; return $r; }   # 计时（tools/tm.py）+ 记一步进度
@@ -172,6 +172,6 @@ rm -rf "$W/build"; echo "$PK" > "$W/.stage_pkg"
 ROOT_REPLAY="pkg .stage_pkg .shell_id${SIKEY:+ save-identity.json}" root_commit "$G" "$TAG" || exit 1
 P=$(root_cur "$G")/pkg
 echo "出包拆账（步 墙钟 / user / sys 秒）：$(tail -n +2 "$P/timing.tsv" | awk -F'\t' '{printf "%s %s/%s/%s；", $1, $2, $3, $4}')"
-echo "🟢 $G 出包 ${TAG}（$((SECONDS - t0)) 秒）：ipa $(du -h "$P/$G.ipa" | cut -f1)，资源包 $(tail -1 "$P/pack.log")$([ -s "$(root_cur "$G")/shaders/red.txt" ] && echo "；【红】着色器部分包：$(cat "$(root_cur "$G")/shaders/red.txt" 2>/dev/null)")$(root_aoc_note "$(root_cur "$G")")"
+echo "🟢 $G 出包 ${TAG}（$((SECONDS - t0)) 秒）：ipa $(du -h "$P/$G.ipa" | cut -f1)，资源包 $(tail -1 "$P/image.log")$([ -s "$(root_cur "$G")/shaders/red.txt" ] && echo "；【红】着色器部分包：$(cat "$(root_cur "$G")/shaders/red.txt" 2>/dev/null)")$(root_aoc_note "$(root_cur "$G")")"
 [ $REG = 1 ] && { reg "$P" || exit 1; }
 exit 0

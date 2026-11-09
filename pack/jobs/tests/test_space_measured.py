@@ -106,26 +106,26 @@ class SpaceMeasured(JobCase):
         return library.pack_need_bytes([dict(size=size, sha256="a" * 64)], **kw)
 
     def test_formula_acceptance_numbers(self):
-        self.assertEqual(self.need(29_130_000_000, windows=False), 32_043_000_000 + 15_000_000_000)
-        self.assertEqual(self.need(17_480_000_000, windows=False), 19_228_000_000 + 15_000_000_000)
-        self.assertEqual(self.need(2_700_000_000, windows=False), 2_970_000_000 + 5_000_000_000)
+        self.assertEqual(self.need(29_130_000_000, windows=False), 32_043_000_000 * 2 + 15_000_000_000)
+        self.assertEqual(self.need(17_480_000_000, windows=False), 19_228_000_000 * 2 + 15_000_000_000)
+        self.assertEqual(self.need(2_700_000_000, windows=False), 2_970_000_000 * 2 + 5_000_000_000)
 
     def test_unpacked_counts_zero_and_windows_adds_a_copy(self):
-        self.assertEqual(self.need(10_000_000_000, unpacked=True, windows=False), 15_000_000_000)
-        self.assertEqual(self.need(10_000_000_000, windows=True), 11_000_000_000 * 2 + 15_000_000_000)
+        self.assertEqual(self.need(10_000_000_000, unpacked=True, windows=False), 11_000_000_000 + 15_000_000_000)
+        self.assertEqual(self.need(10_000_000_000, windows=True), 11_000_000_000 * 3 + 15_000_000_000)
 
     def test_ledger_does_not_change_budget(self):
         c = self.context("ipa")
         self.ledger(("2026-11-07T10:00:00", GID, "ipa", "1", 16 * 10**9, 500 * 10**9, "旧账"))
         v = self.budget(c, self.game(16 * 10**9))
-        self.assertEqual((v["basis"], v["needBytes"]), ("rule", 17_600_000_000 + 15_000_000_000))
+        self.assertEqual((v["basis"], v["needBytes"]), ("rule", 17_600_000_000 * 2 + 15_000_000_000))
 
     def test_rejection_names_need_and_free(self):
         with patch("shutil.disk_usage", return_value=DU(0, 0, 20 * 10**9)):
             with self.assertRaises(Failure) as e:
                 library.check_pack_space(self.context("ipa"), self.game(16 * 10**9))
         self.assertEqual(e.exception.code, "disk_full")
-        self.assertIn("要 33 GB", str(e.exception)); self.assertIn("只剩 20 GB", str(e.exception)); self.assertIn("「仍然继续」", str(e.exception))
+        self.assertIn("要 50 GB", str(e.exception)); self.assertIn("只剩 20 GB", str(e.exception)); self.assertIn("「仍然继续」", str(e.exception))
 
     def test_space_override_passes_with_warning(self):
         c = self.context("ipa", spaceOverride=True)
