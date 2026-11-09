@@ -226,9 +226,10 @@ def _win_acl(path, sealed):
             owner = C.wstring_at(ptr)
         finally:
             free(ptr)
-        # Deny only mutation, not GENERIC_WRITE (which also includes SYNCHRONIZE
-        # and would reject ordinary read handles). Keep owner WRITE_DAC for GC.
-        deny = f'(D;OICI;0x00010156;;;{owner})' if sealed else ''
+        # Deny writes only, not GENERIC_WRITE (which also includes SYNCHRONIZE and
+        # would reject ordinary read handles). Delete stays allowed so players can
+        # always remove leftovers from Explorer; owner WRITE_DAC is kept for GC.
+        deny = f'(D;OICI;0x00000116;;;{owner})' if sealed else ''
         sddl = f'D:P{deny}(A;OICI;GA;;;{owner})(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)'
         sd = C.c_void_p()
         convert = _api('advapi32', 'ConvertStringSecurityDescriptorToSecurityDescriptorW', W.BOOL,

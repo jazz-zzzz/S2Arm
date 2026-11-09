@@ -100,6 +100,8 @@ def run_request(request_path, *, context_class=Context, operation_overrides=None
         # 一局被停是玩家自己关游戏，不是「任务取消」（11-07 新前端验收）
         # 下载 Xcode 组件的传输由系统资产服务持有：停掉本进程只是不再等，传输可能还在继续（实测 11-08：取消后 Xcode 仍在下载）
         waiting = c.operation in ("downloadIosPlatform", "downloadMetal")
+        if c.operation in CLEANS_AFTER_STOP:
+            library.clean_after_stop(c)
         c.finish("cancelled", "游戏已停止。" if c.operation == "launch" else
                  "已停止等待：Xcode 的下载可能仍在继续（可在 Xcode → 设置 → Components 里查看）。" if waiting else
                  "任务已取消；上次成功的运行版本和存档已保留。")
@@ -114,10 +116,15 @@ def run_request(request_path, *, context_class=Context, operation_overrides=None
             c.last_log = log
         diagnostic = c.report_failure(error)
         message = diagnostic["summary"]
+        if c.operation in CLEANS_AFTER_STOP:   # 错误摘要要读产物根里的日志，所以排在它后面
+            library.clean_after_stop(c)
         c.finish("failed", message)
         return 1
     finally:
         ended.set()
+
+
+CLEANS_AFTER_STOP = ("build", "ipa")
 
 
 def parser():

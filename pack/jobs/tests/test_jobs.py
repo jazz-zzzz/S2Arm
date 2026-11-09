@@ -1208,6 +1208,7 @@ class JobsTests(unittest.TestCase):
         outside = self.c.library / "outside" / "z"; outside.parent.mkdir(parents=True); outside.write_text("x")
         (work / "pkg/link").symlink_to(outside.parent)   # 指向外部的链接：只删链接，指向的文件在
         with patch.object(library, "_windows_layout", return_value=True):
+            (self.c.library / "iPhone" / game["id"] / "a.ipa").write_bytes(b"ipa")   # 老玩家：有 IPA 没容器件
             library.prune_build(self.c, game["id"])
         self.assertEqual([q for q in keep if not q.exists()], [])
         self.assertEqual([q for q in gone if q.exists()], [])
@@ -1568,6 +1569,52 @@ class JobsTests(unittest.TestCase):
         module.apply_custom(app, entries, str(spec_file), "Games")
         self.assertEqual(entries, [dict(title_id="A", name="原名", icon="Games/A/icon.jpg"), dict(title_id="B", name="别的款")])
         self.assertEqual((game / "icon.jpg").read_bytes(), b"original")
+
+    def stopped_game(self, kit=True, ipa=True):
+        gid = "0100000000010000"
+        atomic(self.c.library / "catalog.json", dict(schema=1, games=[dict(id=gid, name="x", display="", packages=[], hidden=False)]))
+        out = self.c.library / "iPhone" / gid; root = out / "roots" / "k@pkg"; root.mkdir(parents=True)
+        (root / "main.npdm").write_bytes(b"n"); (root / "stage.log").write_text("阶段日志")
+        (out / "roots" / "k@现行").symlink_to("k@pkg"); (self.c.library / "cache" / gid / "x").mkdir(parents=True)
+        if ipa: (out / "a.ipa").write_bytes(b"ipa"); (out / "t资源包").mkdir()
+        if kit: (out / library.CONTAINER_KIT).mkdir(); (out / library.CONTAINER_KIT / "main.npdm").write_bytes(b"old")
+        release = self.c.library / "games" / gid / "releases"; (release / "good").mkdir(parents=True); (release / "bad.partial").mkdir()
+        save = self.c.library / "saves" / gid / "s.bin"; save.parent.mkdir(parents=True); save.write_bytes(b"save")
+        return gid, out, save
+
+    def stop_context(self, gid):
+        return Context(dict(self.request, taskId=str(uuid.uuid4()), operation="ipa", gameId=gid))
+
+    def test_clean_after_stop_keeps_previous_delivery_and_logs(self):
+        gid, out, save = self.stopped_game()
+        c = self.stop_context(gid)
+        library.clean_after_stop(c)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(["a.ipa", "t资源包", library.CONTAINER_KIT]))
+        self.assertFalse((self.c.library / "cache" / gid).exists())
+        self.assertEqual((out / library.CONTAINER_KIT / "main.npdm").read_bytes(), b"old")
+        self.assertEqual(save.read_bytes(), b"save")
+        self.assertEqual((c.private / "logs" / (c.task + "-stages") / "stage.log").read_text(), "阶段日志")
+
+    def test_clean_after_stop_removes_first_failed_export(self):
+        gid, out, _ = self.stopped_game(kit=False, ipa=False)
+        library.clean_after_stop(self.stop_context(gid))
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_clean_after_stop_keeps_only_source_of_old_install(self):
+        gid, out, _ = self.stopped_game(kit=False)
+        library.clean_after_stop(self.stop_context(gid))
+        self.assertTrue((out / "roots" / "k@pkg" / "main.npdm").is_file())   # 老玩家：没有容器件时产物根是装机的唯一来源
+
+    def test_sweep_skips_while_export_runs_and_cleans_when_idle(self):
+        gid, out, _ = self.stopped_game()
+        c = self.stop_context(gid)
+        with c.lock("execution"):
+            library.sweep_residue(c)
+        self.assertTrue((out / "roots").exists())
+        library.sweep_residue(c)
+        self.assertFalse((out / "roots").exists())
+        release = self.c.library / "games" / gid / "releases"
+        self.assertEqual([p.name for p in release.iterdir()], ["good"])
 
     def test_diagnostic_bounded_reads_and_atomic_publication(self):
         import unittest.mock as um

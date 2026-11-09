@@ -624,5 +624,8 @@ def prepare(c):
             if temporary.exists():
                 shutil.rmtree(temporary)
         ms.record(c, size_gb)
-        from library import _part_bytes
+        from library import _part_bytes, _rm
+        unpacked = c.library / "cache" / game["id"]   # 运行版本已是独立副本（clone_tree 含 RomFS）：解包和中间目录不再保留
+        if unpacked.exists():
+            _rm(c, c.library, unpacked)
         return dict(gameId=game["id"], outputPath=str(target), outputBytes=_part_bytes([target]), target="macos-arm64", compatibility="unverified")

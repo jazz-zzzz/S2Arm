@@ -134,6 +134,7 @@ class CompilerRetentionTests(unittest.TestCase):
             (roots / 'g@现行').symlink_to('g@new')
             for p in (ident / 'sub/a.bin', ident / 'sub', ident):
                 os.chmod(p, 0o555 if p.is_dir() else 0o444)
+            (roots.parent / 't.ipa').write_bytes(b'ipa')   # 老玩家：有 IPA 没容器件，现行产物根要留着
             library.prune_build(c, gid)
             self.assertFalse((roots / 'g@old').exists())
             self.assertEqual((roots / 'g@现行/romfs/sub/a.bin').read_bytes(), b'original synthetic romfs')

@@ -6296,20 +6296,12 @@
   "en": "{0} runs iOS {1}; S2Arm needs iOS {2} or later. Update the system first."
  },
  {
-  "source": "解包与构建缓存",
-  "en": "Unpacked files and build cache"
+  "source": "旧版残留",
+  "en": "Leftovers from older versions"
  },
  {
-  "source": "下次出包会重新解包（多花几分钟）",
-  "en": "The next build unpacks the game again (a few more minutes)"
- },
- {
-  "source": "出包中间产物",
-  "en": "Intermediate build files"
- },
- {
-  "source": "下次出包会重新生成（多花几分钟到几十分钟）",
-  "en": "The next build regenerates them (a few to several tens of minutes more)"
+  "source": "旧版本留下的解包和中间文件，出包成功后不再保留；删了不影响已出好的包和 Mac 版本",
+  "en": "Unpacked and intermediate files left by older versions, which are no longer kept after a successful export. Deleting them does not affect finished packages or the Mac version."
  },
  {
   "source": "着色器与出包缓存",

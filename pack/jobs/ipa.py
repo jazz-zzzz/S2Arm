@@ -289,8 +289,11 @@ def _build(c):
     if missing:
         c.diagnostic("追加内容 %d 份没解出，包里不含（%s）" % (len(missing), "、".join(missing[:5]) + (" 等" if len(missing) > 5 else "")), code="aoc_missing", severity="warning")
     # Q15：成功清一次性中间产物，编库缓存跨次保留并按预算裁剪；失败留现场。
-    from library import prune_build
+    from library import prune_build, save_container_kit
     c.begin("清理出包中间产物")
+    root = product_root(c, gid)
+    if root is not None:
+        save_container_kit(c, gid, root)
     prune_build(c, gid)
     cache_result = trim(c.work_root, current_gid=gid, **compiler_policy)
     if not cache_result['accountingComplete'] or cache_result['evictionErrors'] or cache_result['diskErrors'] or cache_result['pressureRemaining']:
@@ -336,11 +339,22 @@ def container_shell(c, sid):
     return d
 
 
-def current_root(c, gid, sid):
-    """这款按本壳出的现行产物根；没出过 / 不是本壳出的 → None"""
+def product_root(c, gid):
+    """这款的现行产物根（打包流程的工作目录）；不存在 → None"""
     from build import oneclick_kuan
     out = c.library / "iPhone" / gid
     r = out / "work/pkg/product" if os.name == "nt" else out / "roots" / (oneclick_kuan(c, gid) + "@现行")   # Windows：win_oneclick 的工作根（现行各项联接 + 直连库，oneclick_win.product）
+    return r.resolve() if (r / "main.npdm").is_file() else None
+
+
+def current_root(c, gid, sid):
+    """这款按本壳出的、用来组装容器的目录：优先容器件（出包成功后留的），老玩家没有容器件时用现行产物根；没出过 / 不是本壳出的 → None"""
+    from library import CONTAINER_KIT
+    out = c.library / "iPhone" / gid
+    kit = out / CONTAINER_KIT
+    r = kit if (kit / "main.npdm").is_file() else product_root(c, gid)
+    if r is None:
+        return None
     try:
         ok = (r / "main.npdm").is_file() and (out / SHELL_STAMP).read_text(encoding="utf-8").strip() == sid
     except OSError:

@@ -137,8 +137,7 @@ class FreeSpace(JobCase):
         library.atomic(self.c.library / "catalog.json", dict(schema=1, games=games))
         L, P, W = self.c.library, self.c.private, self.c.work_root
         self.files = {
-            "unpack": [write(L / "cache" / GID / "extract" / "romfs.bin", 1 * MIB)],
-            "intermediate": [write(L / "iPhone" / GID / "roots" / "r@1" / "a.bin", 2 * MIB), write(L / "iPhone" / GID / "build.tmp", 1 * MIB)],
+            "legacy": [write(L / "cache" / GID / "extract" / "romfs.bin", 1 * MIB), write(L / "iPhone" / GID / "roots" / "r@1" / "a.bin", 2 * MIB), write(L / "iPhone" / GID / "build.tmp", 1 * MIB)],
             "shaders": [write(W / "run" / "s2arm" / "cache" / "direct" / GID / "lib.bin", 2 * MIB),
                         write(W / "run" / "s2arm" / "cache" / "bake" / f"{GID.lower()}-x" / "b.bin", 1 * MIB)],
             "mac": [write(L / "games" / GID / "app.bin", 1 * MIB)],
@@ -146,7 +145,7 @@ class FreeSpace(JobCase):
             "saves": [write(L / "saves" / GID / "slot0.bin", 1 * MIB)],
             "logs": [write(L / "iPhone" / GID / "logs" / "build.log", 1 * MIB)],
         }
-        self.mib = {"unpack": 1, "intermediate": 3, "shaders": 3, "mac": 1, "ipa": 4, "saves": 1, "logs": 1}
+        self.mib = {"legacy": 4, "shaders": 3, "mac": 1, "ipa": 4, "saves": 1, "logs": 1}
         self.shared = [write(W / "cache" / "air" / "shared.bin", 1 * MIB)]   # 各款共用的编库缓存：不归任何一款
         self.other = [write(L / "cache" / OTHER / "x.bin", 1 * MIB), write(L / "iPhone" / OTHER / "o.ipa", 1 * MIB)]
 
@@ -162,7 +161,7 @@ class FreeSpace(JobCase):
         self.assertEqual(len(out["games"]), 1)
         g = out["games"][0]
         self.assertEqual((g["gameId"], g["name"]), (GID, "异度神剑3"))
-        self.assertEqual([p["id"] for p in g["parts"]], ["unpack", "intermediate", "shaders", "mac", "ipa"])
+        self.assertEqual([p["id"] for p in g["parts"]], ["legacy", "shaders", "mac", "ipa"])
         self.assertEqual([k["id"] for k in g["kept"]], ["saves", "logs"])
         for row in g["parts"] + g["kept"]:
             with self.subTest(part=row["id"]):
@@ -171,7 +170,7 @@ class FreeSpace(JobCase):
         everyone = library.space_survey(self.context("spaceSurvey"))
         self.assertEqual([g["gameId"] for g in everyone["games"]], [GID, OTHER])
         other = everyone["games"][1]
-        self.assert_mib(sum(p["bytes"] for p in other["parts"] if p["id"] == "unpack"), 1)
+        self.assert_mib(sum(p["bytes"] for p in other["parts"] if p["id"] == "legacy"), 1)
         self.assert_mib(sum(p["bytes"] for p in other["parts"] if p["id"] == "ipa"), 1)
         with self.assertRaises(Failure):
             library.space_survey(self.context("spaceSurvey", gameId="0100000000000FFF"))
@@ -225,10 +224,10 @@ class FreeSpace(JobCase):
         result, event = self.worker("spaceSurvey", gameId=GID)
         self.assertEqual((result.returncode, event["state"]), (0, "succeeded"), result.stderr)
         self.assertEqual(event["result"]["games"][0]["gameId"], GID)
-        result, event = self.worker("spaceFree", gameId=GID, parts=["unpack"])
+        result, event = self.worker("spaceFree", gameId=GID, parts=["legacy"])
         self.assertEqual((result.returncode, event["state"]), (0, "succeeded"), result.stderr)
-        self.assert_mib(event["result"]["freedBytes"], 1)
-        self.assertFalse(self.files["unpack"][0].exists()); self.assertTrue(self.files["ipa"][0].exists())
+        self.assert_mib(event["result"]["freedBytes"], 4)
+        self.assertFalse(self.files["legacy"][0].exists()); self.assertTrue(self.files["ipa"][0].exists())
 
 
 if __name__ == "__main__":

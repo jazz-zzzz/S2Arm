@@ -4,7 +4,9 @@ Storage/interaction helpers adapted from LumaDock under MIT.
 """
 from __future__ import annotations
 import collections
+import contextlib
 import errno
+import filelock
 import hashlib
 import json
 import os
@@ -889,6 +891,7 @@ def catalog(c):
     from build import validate_runtime
     import toolchain
     c.begin("读取游戏库")
+    sweep_residue(c)
     cat = c.catalog()
     input_supported, input_reason = toolchain.input_interface(c)
     for game in cat["games"]:
@@ -1092,20 +1095,130 @@ def _windows_layout():   # 单测可打桩：Windows 的产物根在 work/ 下�
     return os.name == "nt"
 
 
-def prune_build(c, gid, *, retain_compiler=True):
-    """成功后清本款中间产物，保留共享编库缓存；显式清缓存用 retain_compiler=False。失败不调用。
-    自动清理保留产物根里的现行版本（roots/*@现行 及其指向，11-02 多平台共用阶段：接着导 Mac 时克隆它起步、平台无关阶段按键跳过；
-    再导 iPhone 也从它增量刷新），只清旧版本——与 Mac 构建缓存「保留现行」一致；显式清缓存照旧整个删。
-    成功后的自动清理（retain_compiler=True，只在打 iPhone 包成功后调）先记一行出包实测（record_pack_usage）：要量清之前的整套占用"""
-    if retain_compiler:
+CONTAINER_KIT = "container-kit"   # iPhone/<游戏号>/container-kit：装机组装容器要用的文件，出包成功后从产物根存一份独立副本
+SHELL_STAMP_NAME = "shell.id"
+
+
+def save_container_kit(c, gid, root):
+    """把组装容器要读的文件（ship_ext.place_game / display_name / 随包表：顶层普通文件、ctl/control.nacp、programs/<n>/）存成不依赖产物根的副本。
+    root 里的链接按内容拷，之后删产物根、RomFS 存储、Windows 的 work/ 都不影响装机、续签和单壳追加。没有 main.npdm 返回 None，不动旧的。"""
+    root = Path(root)
+    if not (root / "main.npdm").is_file():
+        return None
+    out = c.library / "iPhone" / gid
+    kit, temporary = out / CONTAINER_KIT, out / (CONTAINER_KIT + ".partial")
+    if temporary.exists():
+        _rm(c, c.library, temporary)
+    def copy_files(source, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        for p in source.iterdir():
+            if p.is_file() and not p.name.startswith(".") and p.suffix != ".log":
+                shutil.copyfile(p, dest / p.name)
+    copy_files(root, temporary)
+    if (root / "ctl/control.nacp").is_file():
+        (temporary / "ctl").mkdir()
+        shutil.copyfile(root / "ctl/control.nacp", temporary / "ctl/control.nacp")
+    programs = root / "programs"
+    if programs.is_dir():
+        for p in sorted(programs.iterdir()):
+            if p.is_dir() and (p / "main.npdm").is_file():
+                copy_files(p, temporary / "programs" / p.name)
+    if kit.exists():
+        _rm(c, c.library, kit)
+    os.replace(temporary, kit)
+    return kit
+
+
+@contextlib.contextmanager
+def _execution_idle(c):
+    """拿得到出包执行锁才进去（有任务在跑时 yield False）。不走 c.lock：那里先查取消，被取消的任务也要能收尾。"""
+    with (c.library / ".execution.lock").open("a") as f:
+        try:
+            filelock.try_lock(f)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            filelock.unlock(f)
+
+
+def _residue_disposable(c, gid):
+    """解包和中间产物能不能删：有容器件，或这款没有已出好的 IPA。老玩家有 IPA 没容器件时，现行产物根是装机的唯一来源，留给「旧版残留」项先存容器件再删。"""
+    out = c.library / "iPhone" / gid
+    return (out / CONTAINER_KIT / "main.npdm").is_file() or not (out.is_dir() and any(p.is_file() and p.suffix == ".ipa" for p in out.iterdir()))
+
+
+def _keep_stage_logs(c, gid):
+    """产物根里的阶段日志要跟着删：先拷进私有日志目录，失败后的诊断包还能带上（只拷文件，单份 8 MB 以内，最多 64 份）。"""
+    roots = [*(c.library / "iPhone" / gid).glob("roots/*@现行"), *(c.library / "iPhone" / gid).glob("work/pkg/product"), *(c.library / "cache" / gid).glob("*/roots/*@现行")]
+    dest = c.private / "logs" / (c.task + "-stages")
+    count = 0
+    for root in roots:
+        for log in sorted(root.glob("*.log")):
+            if count >= 64 or not log.is_file() or log.stat().st_size > 8 << 20:
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(log, dest / log.name)
+            count += 1
+
+
+def clean_after_stop(c):
+    """出包失败或被取消后清解包和中间产物，在错误摘要生成之后调。已完成的着色器缓存、之前成功的 IPA、资源包、容器件、Mac 运行版本和存档都不动；这里出错不改变任务结果，下次空闲时再扫。"""
+    try:
+        gid = c.r.get("gameId")
+        if not any(g.get("id") == gid for g in read(c.library / "catalog.json", {}).get("games", [])):
+            return   # 这次失败可能正因为游戏不在库里，没有东西要清，也不该多报一条
+        with _execution_idle(c) as idle:
+            if idle and _residue_disposable(c, gid):
+                _keep_stage_logs(c, gid)
+                prune_build(c, gid, record=False)
+    except (Failure, OSError, ValueError) as error:
+        c.diagnostic("清理中间产物没有完成，下次空闲时会再清：" + c.redact(str(error)), code="job_failed", severity="warning")
+
+
+def sweep_residue(c):
+    """启动器空闲时扫掉崩溃、断电、进程被杀留下的解包和中间产物；有出包在跑时不动。"""
+    try:
+        with _execution_idle(c) as idle:
+            if not idle:
+                return
+            for game in c.catalog()["games"]:
+                gid = game["id"]
+                out = c.library / "iPhone" / gid
+                stale = (c.library / "cache" / gid).exists() or (out.is_dir() and any(p.name not in (CONTAINER_KIT, SHELL_STAMP_NAME, "logs") and p.suffix != ".ipa" and not p.name.endswith("资源包") for p in out.iterdir()))
+                if stale and _residue_disposable(c, gid):
+                    prune_build(c, gid, record=False)
+                for partial in (c.library / "games" / gid / "releases").glob("*.partial"):
+                    _rm(c, c.library, partial)
+    except (Failure, OSError, ValueError):
+        pass   # 清不掉不影响读游戏库，下次再扫
+
+
+def prune_build(c, gid, *, retain_compiler=True, record=True):
+    """出包结束后清本款解包和中间产物，保留共享编库缓存；显式清缓存用 retain_compiler=False。
+    自动清理只留 IPA、资源包、日志、容器件和 shell.id；老玩家有 IPA 没容器件时保持旧行为，留现行产物根，免得装机报 container_stale。
+    出包成功后的清理先记一行出包实测（record_pack_usage）：要量清之前的整套占用"""
+    if retain_compiler and record:
         game = next((g for g in read(c.library / "catalog.json", {}).get("games", []) if g.get("id") == gid), None)
         if game:
             record_pack_usage(c, game)
     out = c.library / "iPhone" / gid
     n = 0
+    kit_ready = _residue_disposable(c, gid)
+    if retain_compiler and kit_ready:
+        unpacked = c.library / "cache" / gid
+        if unpacked.exists():
+            _rm(c, c.library, unpacked); n += 1
     if out.is_dir():
         for p in out.iterdir():
             if p.name == "logs" or p.name.endswith("资源包") or (p.is_file() and p.suffix == ".ipa"):
+                continue
+            if retain_compiler and p.name in (CONTAINER_KIT, SHELL_STAMP_NAME):
+                continue
+            if retain_compiler and kit_ready:
+                _rm(c, c.library, p); n += 1
                 continue
             if p.name == "roots" and retain_compiler and p.is_dir() and not _is_link(p):
                 n += _prune_roots(c, p)
@@ -1196,8 +1309,7 @@ def clean(c):
 # 每款按部件列出占用，玩家勾选后删除。只列「下次出包会重建」的部件和已出好的包；存档、日志、配置、清单、游戏原件只报大小、不给删。
 #   直接删，不放废纸篓（废纸篓仍占同一块盘）。有任务在跑（执行锁拿不到）拒绝，不等。
 SPACE_PARTS = (
-    ("unpack", "解包与构建缓存", "下次出包会重新解包（多花几分钟）"),
-    ("intermediate", "出包中间产物", "下次出包会重新生成（多花几分钟到几十分钟）"),
+    ("legacy", "旧版残留", "旧版本留下的解包和中间文件，出包成功后不再保留；删了不影响已出好的包和 Mac 版本"),
     ("shaders", "着色器与出包缓存", "下次出包会重新翻译着色器（大游戏要多花较长时间）"),
     ("mac", "Mac 运行版本", "下次在 Mac 上玩之前会重新准备"),
     ("ipa", "已出好的 iPhone 包", "删了要重新出包才能再装到 iPhone；已装好的游戏不受影响"),
@@ -1206,7 +1318,7 @@ SPACE_KEPT = ("saves", "logs")
 
 
 def _ipa_outputs(out):
-    return [p for p in out.iterdir() if (p.is_file() and p.suffix == ".ipa") or p.name.endswith("资源包")] if out.is_dir() else []
+    return [p for p in out.iterdir() if (p.is_file() and p.suffix == ".ipa") or p.name.endswith("资源包") or p.name in (CONTAINER_KIT, SHELL_STAMP_NAME)] if out.is_dir() else []
 
 
 def space_parts(c, gid):
@@ -1216,8 +1328,7 @@ def space_parts(c, gid):
     ipa = _ipa_outputs(out)
     inter = [p for p in out.iterdir() if p.name != "logs" and p not in ipa] if out.is_dir() else []
     parts = {
-        "unpack": [c.library / "cache" / gid],
-        "intermediate": inter,
+        "legacy": [c.library / "cache" / gid, *inter],
         "shaders": [p for p in game_caches(c, gid) if p not in shared],
         "mac": [c.library / "games" / gid],
         "ipa": ipa,
@@ -1251,7 +1362,7 @@ def space_survey(c):
         c.check()
         parts = space_parts(c, g["id"])
         rows.append(dict(gameId=g["id"], name=game_custom(c, g["id"])["name"] or g.get("name") or g["id"],
-                         parts=[dict(id=k, title=t, rebuild=r, bytes=_part_bytes(parts[k])) for k, t, r in SPACE_PARTS],
+                         parts=[dict(id=k, title=t, rebuild=r, bytes=_part_bytes(parts[k])) for k, t, r in SPACE_PARTS if k != "legacy" or parts[k]],   # 没有旧版残留就不显示
                          kept=[dict(id=k, bytes=_part_bytes(parts[k])) for k in SPACE_KEPT]))
     return dict(games=rows)
 
@@ -1265,6 +1376,11 @@ def space_free(c):
     with c.lock("execution"), c.lock():
         gid = c.game()["id"]
         c.begin("释放空间")
+        if "legacy" in want:   # 老玩家的现行产物根是装机的唯一来源：删之前先存成容器件，否则装机会报 container_stale
+            from ipa import product_root
+            root = product_root(c, gid)
+            if root is not None and not (c.library / "iPhone" / gid / CONTAINER_KIT / "main.npdm").is_file():
+                save_container_kit(c, gid, root)
         parts = space_parts(c, gid)
         freed, done = 0, []
         for k in [k for k, _, _ in SPACE_PARTS if k in want]:
