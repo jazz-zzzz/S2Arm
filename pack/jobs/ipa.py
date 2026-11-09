@@ -380,14 +380,22 @@ def assemble(c, gid, root=None, dest=None):
     if base.is_dir():
         cat = json.loads((base / "s2a_catalogue.json").read_text(encoding="utf-8"))
         if cat.get("shell_id") != sid:
-            stale = []
+            stale, deleted = [], []
+            in_library = {g["id"].upper() for g in c.catalog()["games"]}
             for e in cat.get("games", []):
-                if e["title_id"] != gid:
-                    roots[e["title_id"]] = current_root(c, e["title_id"], sid)
-                    if roots[e["title_id"]] is None:
-                        stale.append(e.get("name") or e["title_id"])
+                if e["title_id"] == gid:
+                    continue
+                if e["title_id"].upper() not in in_library:   # 玩家已从游戏库删掉：重出不了，也不该挡住别的游戏，新容器里不再带它
+                    deleted.append(e.get("name") or e["title_id"])
+                    continue
+                roots[e["title_id"]] = current_root(c, e["title_id"], sid)
+                if roots[e["title_id"]] is None:
+                    stale.append(e.get("name") or e["title_id"])
             if stale:
                 raise Failure("S2Arm 更新过，手机上的「" + "」「".join(stale) + "」还是旧版出的：同一个 App 里的游戏要同一版，先给它们各「打 iPhone 包」一次，再装这款（手机上现有的不受影响）。", code="container_stale")
+            if deleted:
+                c.diagnostic("「" + "」「".join(deleted) + "」已从游戏库删除，新版 S2Arm 里不再包含它们；手机上的存档还在。", code="job_failed", severity="warning")
+            base = None   # 换壳时留下的各款都在 roots 里按本壳重组，已有容器里的不再带（已删的款也就留在外面）
     shell = container_shell(c, sid)
     out = Path(dest) if dest else lib
     out.mkdir(parents=True, exist_ok=True)
@@ -401,7 +409,7 @@ def assemble(c, gid, root=None, dest=None):
         (tmp / "custom.json").write_text(json.dumps(container_custom(c), ensure_ascii=False), encoding="utf-8")
         try:
             c.run([os.sys.executable, "-X", "utf8", "-B", c.engine / "pack/ship_ext.py", "container", "--shell", shell, "--out", tmp / "S2Arm.app", "--bundle-id", CONTAINER_BUNDLE,
-                   "--icon", icon, "--sign", "none" if os.name == "nt" else "adhoc", "--custom", tmp / "custom.json", *[x for r in roots.values() for x in ("--game", r)], *(["--base", base] if base.is_dir() else [])], log, c.env())
+                   "--icon", icon, "--sign", "none" if os.name == "nt" else "adhoc", "--custom", tmp / "custom.json", *[x for r in roots.values() for x in ("--game", r)], *(["--base", base] if base and base.is_dir() else [])], log, c.env())
         except Failure as e:
             text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
             if e.code == "tool_exit" and "地址空间类型不一致" in text:

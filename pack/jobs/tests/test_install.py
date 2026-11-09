@@ -567,10 +567,34 @@ class AssembleTests(unittest.TestCase):
         def run(*a, **k): pass
         with um.patch.object(packer, "current_shell_id", return_value="SID2"), \
              um.patch.object(packer, "container_shell", return_value=shell), \
-             um.patch.object(self.c, "run", run):
+             um.patch.object(self.c, "run", run), \
+             um.patch.object(self.c, "catalog", return_value={"games": [{"id": A}, {"id": B}]}):
             with self.assertRaises(Failure) as e: packer.assemble(self.c, A)
         self.assertEqual(e.exception.code, "container_stale")
         self.assertIn("B款", str(e.exception))
+
+    def test_assemble_shell_changed_skips_games_deleted_from_library(self):
+        """#194：旧容器里的某款已从游戏库删除：不点名、不挡出包，新容器不带它（不传 --base），黄字说明"""
+        A, B = "0100000000010000", "0100000000020000"
+        self._shell_and_root(A, "SID2")
+        import ipa as packer
+        shell = self.c.private / "shell"; shell.mkdir(exist_ok=True); (shell / "manifest.json").write_text("{}")
+        base = self.c.library / "iPhone/container/S2Arm.app"; base.mkdir(parents=True, exist_ok=True)
+        (base / "s2a_catalogue.json").write_text(json.dumps({"schema": 1, "shell_id": "SID1", "games": [{"title_id": B, "name": "B款"}, {"title_id": A}]}))
+        runs, notes = [], []
+        class Stop(Exception): pass
+        def run(cmd, *a, **k):
+            runs.append([str(x) for x in cmd]); raise Stop
+        with um.patch.object(packer, "current_shell_id", return_value="SID2"), \
+             um.patch.object(packer, "container_shell", return_value=shell), \
+             um.patch.object(self.c, "run", run), \
+             um.patch.object(self.c, "catalog", return_value={"games": [{"id": A}]}), \
+             um.patch.object(self.c, "diagnostic", lambda m, **k: notes.append((m, k.get("severity")))), \
+             self.assertRaises(Stop):
+            packer.assemble(self.c, A)
+        self.assertNotIn("--base", runs[0])
+        self.assertEqual(runs[0].count("--game"), 1)
+        self.assertEqual(len(notes), 1); self.assertIn("B款", notes[0][0]); self.assertEqual(notes[0][1], "warning")
 
     def test_assemble_own_game_no_root(self):
         """① 本款无本壳产物根 → container_stale"""

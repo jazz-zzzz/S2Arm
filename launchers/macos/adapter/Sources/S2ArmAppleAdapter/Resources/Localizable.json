@@ -6570,5 +6570,9 @@
  {
   "source": "无法读取游戏内容：可能是文件不完整、缺票据或密钥不匹配。请核对原始文件；若已确认 Switch 密钥版本不足，再重新导出，到「设置 → 玩家密钥」重新导入。",
   "en": "Could not read the game content. The file might be incomplete, a ticket may be missing, or the keys may not match. Check the original file. If you have confirmed the Switch keys are outdated, export them again and add them in Settings → Player keys."
+ },
+ {
+  "source": "「{0}」已从游戏库删除，新版 S2Arm 里不再包含它们；手机上的存档还在。",
+  "en": "\"{0}\" was removed from the library, so the new S2Arm no longer includes it. Its saves stay on the phone."
  }
 ]
