@@ -150,6 +150,48 @@ int main(void) {
         clear(&a,0,0,0); clear(&b,0,0,0); clear(&first,0,0,0);
         targets(&a,&b,&first); pending_clear_draw(&triangle); finish();
         pixels("pending ClearColor lands before feedback snapshot",&first,48,176,80);
+
+        // Distinct NVN objects over the same pool bytes share host storage.
+        // Pending clears must be visible through those aliases before sampling.
+        tex_t alias_a,alias_b;
+        make_texture(&alias_a,pool,0); make_texture(&alias_b,pool,65536);
+        REQUIRE(alias_a.serial!=a.serial && alias_b.serial!=b.serial);
+        REQUIRE(tex_mtl(&alias_a)==tex_mtl(&a) && tex_mtl(&alias_b)==tex_mtl(&b));
+        nvn_be_reg_tex(4,&alias_a,NULL); nvn_be_reg_tex(5,&alias_b,NULL);
+        nvn_be_sub_begin(); state_reset(); S.prog=&p; S.tex[1][0]=4; S.tex[1][1]=5;
+        clear(&a,0,0,0); clear(&b,0,0,0); clear(&first,0,0,0);
+        copies_before=g_fb_count;
+        targets(&a,&b,&first); pending_clear_draw(&triangle); finish();
+        pixels("different serials sharing attachment storage see pending clears",&first,48,176,80);
+        CHECK(g_fb_count-copies_before==2,"storage aliases take two distinct feedback snapshots (got %llu)",
+            (unsigned long long)(g_fb_count-copies_before));
+
+        // The default read-only feedback path needs to land pending clears too,
+        // but does not need to copy attachments this draw does not write.
+        g_fb_all=0;
+        nvn_be_sub_begin(); state_reset(); S.prog=&p; S.tex[1][0]=4; S.tex[1][1]=5;
+        clear(&a,0,0,0); clear(&b,0,0,0); clear(&first,0,0,0);
+        copies_before=g_fb_count; uint64_t hits_before=g_fb_hits;
+        targets(&a,&b,&first); pending_clear_draw(&triangle); finish();
+        pixels("default feedback path lands clears through storage aliases",&first,48,176,80);
+        CHECK(g_fb_hits-hits_before==2,"default path detects both aliased attachments (got %llu)",
+            (unsigned long long)(g_fb_hits-hits_before));
+        CHECK(g_fb_count==copies_before,"default read-only feedback keeps the no-copy path (got %llu)",
+            (unsigned long long)(g_fb_count-copies_before));
+        g_fb_all=1;
+
+        // Equal dimensions and format do not make disjoint pool ranges alias.
+        tex_t independent_a,independent_b;
+        make_texture(&independent_a,pool,262144); make_texture(&independent_b,pool,327680);
+        nvn_be_reg_tex(6,&independent_a,NULL); nvn_be_reg_tex(7,&independent_b,NULL);
+        nvn_be_sub_begin(); state_reset(); S.prog=&p; S.tex[1][0]=6; S.tex[1][1]=7;
+        clear(&independent_a,32,64,96); clear(&independent_b,160,192,224);
+        clear(&a,0,0,0); clear(&b,0,0,0); clear(&first,0,0,0);
+        copies_before=g_fb_count;
+        targets(&a,&b,&first); pending_clear_draw(&triangle); finish();
+        pixels("same-shape disjoint storage remains independent",&first,32,160,64);
+        CHECK(g_fb_count==copies_before,"disjoint storage takes no feedback snapshots (got %llu)",
+            (unsigned long long)(g_fb_count-copies_before));
         unlink(map); unlink(user);
     }
     printf("%s t_nvn_feedback_snapshot: %u checks, %u failures\n",failures?"✗":"✓",checks,failures);

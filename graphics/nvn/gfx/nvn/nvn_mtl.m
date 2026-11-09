@@ -1,4 +1,5 @@
 // Metal execution layer of the NVN null device, see nvn_mtl.h.
+// S2Arm 2026-11-09: feedback checks include distinct NVN objects sharing host texture storage.
 // 弱链接[host,ios]：mtl_tab_selftest（本文件定义；宿主与 iOS 链接行沿用原清单放行，runtime/build.mk 自动收）
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -11627,14 +11628,28 @@ static void fb_prepare(NvProg *pr) {
     id<MTLTexture> cbase[4] = {nil}, csnap[4] = {nil}; NSUInteger ckey[4][4]; int ncopy = 0, settled = 0;   // ④ copies of this draw by real subresource (base, levels, slices); clears landed
     for (int i = 0; i < fs->rf.nb && g_fb_n < 4; i++) { const nvn_rbind *b = &fs->rf.b[i]; if (b->kind != NVN_RB_TEX || b->reg >= 128) continue;
         int tid = (int)(tex_slot_h(S.tex[1], S.img[1], b->reg) & 0xfffff);
-        pthread_mutex_lock(&g_rmu); uint64_t ser = tid < g_ntreg && g_treg[tid].ok ? g_treg[tid].t.serial : 0; pthread_mutex_unlock(&g_rmu);
+        alias_key sampled;
+        pthread_mutex_lock(&g_rmu); uint64_t ser = tid < g_ntreg && g_treg[tid].ok ? g_treg[tid].t.serial : 0;
+        if (ser) alias_key_of(&sampled, &g_treg[tid].t); pthread_mutex_unlock(&g_rmu);
         if (!ser) continue;
-        for (int k = 0; k < R.rt.n && k < 8 && g_fb_n < 4; k++) { if (!R.rt.color[k] || R.rt.color[k]->serial != ser) continue;
+        for (int k = 0; k < R.rt.n && k < 8 && g_fb_n < 4; k++) {
+            const tex_t *attachment = R.rt.color[k]; if (!attachment) continue;
+            int alias = attachment->serial != ser; id<MTLTexture> attachment_storage = nil;
+            if (alias) {
+                // Serial numbers name NVN objects, not storage. Reject unrelated pool ranges
+                // cheaply, then use the same layout key as the shared-texture table.
+                if (!sampled.pool || sampled.pool != (uint64_t)(uintptr_t)attachment->pool || sampled.off != attachment->off) continue;
+                alias_key attached; alias_key_of(&attached, attachment); if (memcmp(&sampled, &attached, sizeof sampled)) continue;
+                attachment_storage = tex_mtl(attachment);
+            }
             uint64_t aser; int lv, sl; rt_sub(&R.rt, k, &aser, &lv, &sl);
             pthread_mutex_lock(&g_rmu); void *tv = NULL; tex_fast_rid(tid, &tv); id<MTLTexture> t = (__bridge id<MTLTexture>)tv; pthread_mutex_unlock(&g_rmu);
             if (!t) continue;
             int dup = 0; for (int q = 0; q < g_fb_n; q++) dup |= g_fb_src[q] == t; if (dup) continue;
             id<MTLTexture> base = t.parentTexture ? t.parentTexture : t; NSUInteger tl = t.parentTexture ? t.parentRelativeLevel : 0, ts = t.parentTexture ? t.parentRelativeSlice : 0;
+            // Packaged textures may have identical descriptors but independent host copies.
+            // Only an actual shared root can be feedback through a different serial.
+            if (alias && (!attachment_storage || (attachment_storage.parentTexture ?: attachment_storage) != base)) continue;
             if (tl + t.mipmapLevelCount <= (NSUInteger)lv || tl > (NSUInteger)lv) continue;   // the sampled levels do not include the attachment's level (mip generation etc.): not feedback
             MTLTextureType tt = t.textureType, vt = (MTLTextureType)b->dtt;
             // The same for layers: a view that holds only some of the base's slices and not the one being drawn (Breath of the Wild 9a08f70c2775ebe7 samples
